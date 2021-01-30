@@ -1,3 +1,9 @@
+// Package providing a simple command line utility to inspect
+// all emails in a given mailbox and to remove all duplicates.
+//
+// Note: When running, make sure that the imap server is set
+// to move messages to bin or delete when message is
+// marked as deleted over imap.
 package main
 
 import (
@@ -19,7 +25,9 @@ func main() {
 	password := flag.String("password", "", "IMAP password (required)")
 	server := flag.String("server", "", "IMAP server (required)")
 	mbox := flag.String("mbox", "", "Mailbox to remove duplicates from (required)")
-	dryRun := flag.Bool("dry-run", false, "If set, no removal will be performed")
+	listOnlyDups := flag.Bool("list-only-dups", false, "If present, only duplicated messages are output")
+	ignoreMessageID := flag.Bool("ignore-message-id", false, "If present, MessageId is ignored, a hash for each message is instead calculated")
+	dryRun := flag.Bool("dry-run", false, "If present, no removal will be performed")
 	flag.Parse()
 
 	if *username == "" || *password == "" || *server == "" || *mbox == "" {
@@ -65,7 +73,7 @@ func main() {
 	}
 	defer c.Logout()
 
-	uids, err := FindDups(c, *mbox)
+	uids, err := FindDups(c, *mbox, *ignoreMessageID, *listOnlyDups)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot find duplicates: %s\n", err)
 		return
@@ -85,7 +93,7 @@ func main() {
 
 }
 
-func FindDups(c *client.Client, mbox string) (uids []uint32, err error) {
+func FindDups(c *client.Client, mbox string, ignoreMessageID bool, listOnlyDups bool) (uids []uint32, err error) {
 	st, err := c.Select(mbox, false)
 	if err != nil {
 		return nil, err
@@ -112,6 +120,12 @@ func FindDups(c *client.Client, mbox string) (uids []uint32, err error) {
 
 	for msg := range msgChan {
 		messageID := msg.Envelope.MessageId
+
+		// instead hash the message contents
+		if ignoreMessageID {
+			messageID = ""
+		}
+
 		if messageID == "" {
 			hash := sha1.New()
 			builder := strings.Builder{}
@@ -148,13 +162,23 @@ func FindDups(c *client.Client, mbox string) (uids []uint32, err error) {
 			messageID = base64.StdEncoding.EncodeToString(hash.Sum([]byte(builder.String())))
 		}
 
-		fmt.Printf("%s: %d %s:", mbox, msg.Uid, messageID)
+		if !listOnlyDups {
+			fmt.Printf("%s: %s %d %s:", mbox, msg.Envelope.Subject, msg.Uid, messageID)
+		}
 		if _, found := uniqueIDs[messageID]; found {
 			dups = append(dups, msg.Uid)
-			fmt.Println("dup")
+			if listOnlyDups {
+				fmt.Printf("%s: %s %d %s:", mbox, msg.Envelope.Subject, msg.Uid, messageID)
+			}
+			fmt.Println("duplicate")
+			if listOnlyDups {
+				fmt.Println("")
+			}
 			continue
 		}
-		fmt.Println("")
+		if !listOnlyDups {
+			fmt.Println("")
+		}
 		uniqueIDs[messageID] = struct{}{}
 	}
 	err = <-errChan

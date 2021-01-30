@@ -1,4 +1,4 @@
-module github.com/yzzyx/imap-clean-dup
+module github.com/tomasvitek/imap-clean-dup
 
 go 1.14
 
